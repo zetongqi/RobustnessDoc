@@ -42,7 +42,9 @@ class Normalize(nn.Module):
         ]
 
 
+# img_tensor is numpy array
 def predict(model, img_tensor):
+    img_tensor = torch.tensor(img_tensor)
     norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     pred = model(norm(img_tensor))
     return pred.max(dim=1)[1].item()
