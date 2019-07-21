@@ -11,5 +11,5 @@ torch = "*"
 numpy = "*"
 matplotlib = "*"
 torchvision = "*"
-Pillow = "*"
-
+Pillow = "==5.4.1"
+scipy = "==1.2.0"

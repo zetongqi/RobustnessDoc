@@ -6,10 +6,12 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import torch.optim as optim
-import png
+import os
+import PIL
+import scipy.misc
 
 
-img_path = "/Users/zetong/Desktop/dog.jpg"
+img_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "retriver.jpg")
 
 
 def get_resnet50():
@@ -106,9 +108,13 @@ class loss_objective_attack:
             return None
 
 
+def save_image_from_nparray(nparray, file_name):
+    scipy.misc.imsave(file_name, nparray.transpose(1, 2, 0))
+
+
 if __name__ == "__main__":
     model = get_resnet50()
     attack = loss_objective_attack(model, epsilon=2.0 / 255)
     x = processing(img_path)
     x_adv = attack.targeted_attack(x, 207, 888, iteration=30)
-    png.from_array(x_adv, mode="L").save("adv_dog.png")
+    save_image_from_nparray(x_adv, "retriver_adv.png")
