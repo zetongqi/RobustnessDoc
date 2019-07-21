@@ -6,15 +6,26 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import torch.optim as optim
+import png
 
 
-img_path = "/Users/zetong/Desktop/dog3.jpg"
+img_path = "/Users/zetong/Desktop/dog.jpg"
+
+
+def get_resnet50():
+    model = models.resnet50(pretrained=True)
+    model.eval()
+    return model
+
 
 def processing(img_path):
-	img = Image.open(img_path)
-	preprocess = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(),])
-	img_tensor = preprocess(img)[None, :, :, :]
-	return img_tensor
+    img = Image.open(img_path)
+    preprocess = transforms.Compose(
+        [transforms.Resize((224, 224)), transforms.ToTensor()]
+    )
+    img_tensor = preprocess(img)[None, :, :, :]
+    return img_tensor
+
 
 # simple Module to normalize an image
 class Normalize(nn.Module):
@@ -22,37 +33,82 @@ class Normalize(nn.Module):
         super(Normalize, self).__init__()
         self.mean = torch.Tensor(mean)
         self.std = torch.Tensor(std)
+
     def forward(self, x):
-        return (x - self.mean.type_as(x)[None,:,None,None]) / self.std.type_as(x)[None,:,None,None]
+        return (x - self.mean.type_as(x)[None, :, None, None]) / self.std.type_as(x)[
+            None, :, None, None
+        ]
+
 
 def predict(model, img_tensor):
-	norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-	pred = model(norm(img_tensor))
-	return pred.max(dim=1)[1].item()
+    norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    pred = model(norm(img_tensor))
+    return pred.max(dim=1)[1].item()
 
 
-norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-model = models.resnet50(pretrained=True)
-model.eval()
-img_tensor = processing(img_path)
+class loss_objective_attack:
+    def __init__(self, model, epsilon=2.0 / 255):
+        self.model = model
+        self.epsilon = epsilon
 
-epsilon = 2./255
+    def untargeted_attack(self, x, true_label, iteration=30, learning_rate=1e-1):
+        norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        delta = torch.zeros_like(x, requires_grad=True)
+        opt = optim.SGD([delta], lr=learning_rate)
 
-delta = torch.zeros_like(img_tensor, requires_grad=True)
-opt = optim.SGD([delta], lr=1e-1)
+        for t in range(iteration):
+            pred = self.model(norm(x + delta))
+            loss = -nn.CrossEntropyLoss()(pred, torch.LongTensor([true_label]))
+            if t % 5 == 0:
+                print("loss at iteration", t, ":", loss.item())
 
-for t in range(30):
-    pred = model(norm(img_tensor + delta))
-    loss = -nn.CrossEntropyLoss()(pred, torch.LongTensor([207])) + nn.CrossEntropyLoss()(pred, torch.LongTensor([753])) + delta.norm(p=2)
-    if t % 5 == 0:
-        print(t, loss.item())
-    
-    opt.zero_grad()
-    loss.backward()
-    opt.step()
-    delta.data.clamp_(-epsilon, epsilon)
-    
-print("True class probability:", nn.Softmax(dim=1)(pred)[0,207].item())
-print(predict(model, img_tensor+delta))
-plt.imshow((img_tensor+delta)[0].detach().numpy().transpose(1,2,0))
-plt.show()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            delta.data.clamp_(-self.epsilon, self.epsilon)
+        x_adv = (x + delta).detach()
+        adv_label = predict(self.model, x_adv)
+        if adv_label != true_label:
+            print(
+                "attack sucessful! returning adversarial examples, adversarial label class: ",
+                adv_label,
+            )
+            return x_adv[0].numpy()
+        else:
+            print("attack failed!")
+            return None
+
+    def targeted_attack(
+        self, x, true_label, target_label, iteration=30, learning_rate=1e-1
+    ):
+        norm = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        delta = torch.zeros_like(x, requires_grad=True)
+        opt = optim.SGD([delta], lr=learning_rate)
+
+        for t in range(iteration):
+            pred = model(norm(x + delta))
+            loss = -nn.CrossEntropyLoss()(
+                pred, torch.LongTensor([true_label])
+            ) + nn.CrossEntropyLoss()(pred, torch.LongTensor([target_label]))
+            if t % 5 == 0:
+                print("loss at iteration", t, ":", loss.item())
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            delta.data.clamp_(-self.epsilon, self.epsilon)
+        x_adv = (x + delta).detach()
+        if predict(self.model, x_adv) == target_label:
+            print("attack sucessful!")
+            return x_adv[0].numpy()
+        else:
+            print("attack failed!")
+            return None
+
+
+if __name__ == "__main__":
+    model = get_resnet50()
+    attack = loss_objective_attack(model, epsilon=2.0 / 255)
+    x = processing(img_path)
+    x_adv = attack.targeted_attack(x, 207, 888, iteration=30)
+    png.from_array(x_adv, mode="L").save("adv_dog.png")
